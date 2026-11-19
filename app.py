@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
+import hashlib
+import re
 
 import gradio as gr
+
+from src.vendor_risk.chunking import chunk_pages
+from src.vendor_risk.document_loader import load_document
+from src.vendor_risk.embedding import embed_texts
+from src.vendor_risk.vector_store import add_chunks
 
 
 ALLOWED_DOCUMENT_TYPES = [".pdf", ".docx", ".txt"]
@@ -191,6 +198,34 @@ def _file_list_html(files: list[str] | str | None) -> str:
     return f'<div class="file-list">{chips}</div>'
 
 
+def _as_file_list(files: list[str] | str | None) -> list[str]:
+    if not files:
+        return []
+    return files if isinstance(files, list) else [files]
+
+
+def _vendor_id(vendor_name: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", vendor_name.strip().lower()).strip("-")
+    short_name = normalized[:40] or "vendor"
+    digest = hashlib.sha256(vendor_name.strip().lower().encode("utf-8")).hexdigest()[:12]
+    return f"{short_name}-{digest}"
+
+
+def _index_files(files: list[str] | str | None, source_type: str, vendor_id: str) -> int:
+    all_chunks = []
+    for path in _as_file_list(files):
+        pages = load_document(path)
+        all_chunks.extend(chunk_pages(pages))
+
+    if all_chunks:
+        embeddings = embed_texts([chunk["text"] for chunk in all_chunks])
+    else:
+        embeddings = []
+
+    add_chunks(all_chunks, embeddings, source_type, vendor_id)
+    return len(all_chunks)
+
+
 def document_status(
     policy_files: list[str] | str | None,
     evidence_files: list[str] | str | None,
@@ -233,9 +268,24 @@ def run_assessment(
     if missing:
         return "Complete these items before assessing: " + ", ".join(missing) + "."
 
+    vendor_id = _vendor_id(vendor_name)
+    try:
+        policy_chunks = _index_files(policy_files, "policy", vendor_id)
+        evidence_chunks = _index_files(evidence_files, "evidence", vendor_id)
+    except Exception as exc:
+        return f"Document indexing failed: {exc}"
+
+    if policy_chunks == 0 or evidence_chunks == 0:
+        return (
+            "Documents were uploaded, but no text chunks were extracted. "
+            "Check that the files contain readable text."
+        )
+
     return (
-        "Your details and documents are ready. The assessment service is not configured yet, "
-        "so no AI findings were generated."
+        f"Indexed {policy_chunks} policy chunk{'s' if policy_chunks != 1 else ''} and "
+        f"{evidence_chunks} vendor evidence chunk{'s' if evidence_chunks != 1 else ''} "
+        f"in ChromaDB for vendor {vendor_name.strip()}. "
+        "No AI findings were generated because the assessment service is not configured yet."
     )
 
 
