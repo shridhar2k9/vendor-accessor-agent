@@ -8,8 +8,15 @@ import re
 import gradio as gr
 
 from src.vendor_risk.chunking import chunk_pages
+from src.vendor_risk.assessor import assess_requirement
+from src.vendor_risk.config import (
+    GROQ_MODEL_IS_PLACEHOLDER,
+    is_assessment_configured,
+)
 from src.vendor_risk.document_loader import load_document
 from src.vendor_risk.embedding import embed_texts
+from src.vendor_risk.retrieval import retrieve
+from src.vendor_risk.scoring import CHECKLIST
 from src.vendor_risk.vector_store import add_chunks
 
 
@@ -161,6 +168,15 @@ footer, header { display: none !important; }
 .footer-actions button { min-height: 36px; border-radius: 7px !important; font-size: 11px !important; }
 .footer-note { color: #77859a; font-size: 10px; }
 .feedback { margin-top: 8px; color: #53647b; font-size: 12px; }
+.finding-card { margin: 0 0 12px; padding: 16px 18px; border: 1px solid #e4e9f1; border-radius: 9px; background: #fff; }
+.finding-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; color: #26364c; font-size: 13px; font-weight: 700; }
+.finding-status { padding: 4px 8px; border-radius: 12px; font-size: 10px; }
+.finding-status.met { background: #e5f8f2; color: #167e69; }
+.finding-status.unmet { background: #fdecec; color: #a63b3b; }
+.finding-status.unclear { background: #fff4dd; color: #8a5a08; }
+.finding-copy { margin: 0 0 8px; color: #53647b; font-size: 12px; line-height: 1.6; }
+.finding-evidence { margin: 5px 0 0; color: #68758a; font-size: 11px; line-height: 1.5; }
+.service-notice { margin-bottom: 14px; padding: 12px 14px; border: 1px solid #f1dfb8; border-radius: 8px; background: #fffaf0; color: #795b22; font-size: 12px; line-height: 1.6; }
 @media (max-width: 850px) {
   .sidebar { flex-basis: 68px !important; width: 68px !important; min-width: 68px !important; padding: 20px 8px; }
   .brand { justify-content: center; padding: 0 0 35px; }
@@ -226,6 +242,72 @@ def _index_files(files: list[str] | str | None, source_type: str, vendor_id: str
     return len(all_chunks)
 
 
+def _render_findings(findings: list[dict]) -> str:
+    counts = {status: 0 for status in ("Met", "Unmet", "Unclear")}
+    cards = []
+    for finding in findings:
+        status = finding["status"]
+        counts[status] += 1
+        citations = ""
+        for citation in finding["citations"]:
+            page_label = (
+                f' · page {citation["page"]}' if citation["page"] is not None else ""
+            )
+            citations += (
+                '<div class="finding-evidence">'
+                f'<strong>{escape(citation["document"])}</strong>{page_label}'
+                f': “{escape(citation["excerpt"])}”</div>'
+            )
+        follow_up = finding["follow_up_question"]
+        if follow_up:
+            citations += (
+                '<div class="finding-evidence"><strong>Follow-up:</strong> '
+                f'{escape(follow_up)}</div>'
+            )
+        cards.append(
+            '<div class="finding-card">'
+            '<div class="finding-heading">'
+            f'{escape(finding["id"])} · {escape(finding["severity"].title())}'
+            f'<span class="finding-status {status.lower()}">{escape(status)}</span>'
+            '</div>'
+            f'<p class="finding-copy">{escape(finding["requirement"])}</p>'
+            f'<p class="finding-copy">{escape(finding["explanation"])}</p>'
+            f'{citations}</div>'
+        )
+    summary = (
+        f'{counts["Met"]} Met · {counts["Unmet"]} Unmet · '
+        f'{counts["Unclear"]} Unclear'
+    )
+    return (
+        '<div class="ready-title">Draft findings · human review required</div>'
+        f'<div class="ready-copy">{summary}</div>'
+        f'{"".join(cards)}'
+    )
+
+
+def _service_notice() -> str:
+    if is_assessment_configured():
+        return (
+            '<div class="service-notice">AI assessment is configured. '
+            'Relevant excerpts from uploaded documents are sent to Groq for analysis. '
+            'Findings are draft recommendations and require human review.</div>'
+        )
+    if GROQ_MODEL_IS_PLACEHOLDER:
+        return (
+            '<div class="service-notice"><code>GROQ_MODEL_ID</code> or '
+            '<code>GROQ_MODEL</code> is still set to a '
+            'placeholder. Remove that line from <code>.env</code> to use the default '
+            '<code>openai/gpt-oss-120b</code>, or replace it with a model supported '
+            'by your Groq account. Restart the app after changing configuration.</div>'
+        )
+    return (
+        '<div class="service-notice">AI assessment is not configured. '
+        'Set <code>GROQ_API_KEY</code> in your environment or a local <code>.env</code> '
+        'file, then restart the app. <code>GROQ_MODEL_ID</code> is optional; the default '
+        'is <code>openai/gpt-oss-120b</code>.</div>'
+    )
+
+
 def document_status(
     policy_files: list[str] | str | None,
     evidence_files: list[str] | str | None,
@@ -254,7 +336,7 @@ def run_assessment(
     intended_use: str,
     policy_files: list[str] | str | None,
     evidence_files: list[str] | str | None,
-) -> str:
+) -> tuple[str, str]:
     missing = []
     if not (vendor_name or "").strip():
         missing.append("vendor name")
@@ -266,26 +348,61 @@ def run_assessment(
         missing.append("vendor evidence document")
 
     if missing:
-        return "Complete these items before assessing: " + ", ".join(missing) + "."
+        return (
+            "Complete these items before assessing: " + ", ".join(missing) + ".",
+            "",
+        )
+
+    if not is_assessment_configured():
+        return (
+            "AI assessment is not configured. See the setup instructions below.",
+            _service_notice(),
+        )
 
     vendor_id = _vendor_id(vendor_name)
     try:
         policy_chunks = _index_files(policy_files, "policy", vendor_id)
         evidence_chunks = _index_files(evidence_files, "evidence", vendor_id)
     except Exception as exc:
-        return f"Document indexing failed: {exc}"
+        return f"Document indexing failed: {escape(str(exc))}", ""
 
     if policy_chunks == 0 or evidence_chunks == 0:
         return (
             "Documents were uploaded, but no text chunks were extracted. "
-            "Check that the files contain readable text."
+            "Check that the files contain readable text.",
+            "",
+        )
+
+    try:
+        findings = []
+        context = {
+            "vendor_name": vendor_name.strip(),
+            "intended_use": intended_use.strip(),
+        }
+        for item in CHECKLIST:
+            policy_passages = retrieve(item["requirement"], vendor_id, "policy")
+            vendor_passages = retrieve(item["requirement"], vendor_id, "evidence")
+            assessment = assess_requirement(
+                item["requirement"],
+                policy_passages,
+                vendor_passages,
+                context=context,
+                requirement_id=item["id"],
+            )
+            findings.append({**item, **assessment})
+    except Exception as exc:
+        return (
+            "AI assessment failed. See the details below.",
+            '<div class="service-notice">The assessment did not complete. '
+            'Review the error details below. Check Groq settings or network only '
+            'if the details indicate a provider or connection error. '
+            f'<br><strong>Details:</strong> {escape(str(exc))}</div>',
         )
 
     return (
-        f"Indexed {policy_chunks} policy chunk{'s' if policy_chunks != 1 else ''} and "
-        f"{evidence_chunks} vendor evidence chunk{'s' if evidence_chunks != 1 else ''} "
-        f"in ChromaDB for vendor {vendor_name.strip()}. "
-        "No AI findings were generated because the assessment service is not configured yet."
+        f"Assessment completed for {vendor_name.strip()}. "
+        f"Indexed {policy_chunks} policy and {evidence_chunks} vendor evidence chunks.",
+        _render_findings(findings),
     )
 
 
@@ -410,22 +527,20 @@ with gr.Blocks(title="AI Vendor Risk Assessor") as demo:
                 inputs=[policy_files, evidence_files],
                 outputs=upload_outputs,
             )
-            run_button.click(
-                fn=run_assessment,
-                inputs=[vendor_name, intended_use, policy_files, evidence_files],
-                outputs=assessment_feedback,
-            )
-
             with gr.Row(elem_classes="assessment-header"):
                 gr.HTML('<h2 class="assessment-title">Assessment findings</h2>')
                 gr.HTML('<div class="draft-pill">DRAFT · AWAITING HUMAN REVIEW</div>')
-            gr.HTML(
-                '<div class="notice">The assessment service is not connected yet. '
-                "Uploaded files are not indexed or analyzed.</div>"
-                '<div class="empty-state">'
+            assessment_findings = gr.HTML(
+                _service_notice()
+                + '<div class="empty-state">'
                 '<div class="empty-title">No findings yet</div>'
-                '<div class="empty-copy">Run an assessment after the analysis service is configured. '
-                "Findings will appear here for human review.</div></div>"
+                '<div class="empty-copy">Run an assessment to review evidence against the '
+                'security checklist. Findings remain a draft for human review.</div></div>'
+            )
+            run_button.click(
+                fn=run_assessment,
+                inputs=[vendor_name, intended_use, policy_files, evidence_files],
+                outputs=[assessment_feedback, assessment_findings],
             )
 
             with gr.Row(elem_classes="footer-actions"):

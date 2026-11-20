@@ -1,5 +1,5 @@
 from openai import OpenAI
-from .config import GROQ_API_KEY, is_assessment_configured
+from .config import GROQ_API_KEY, GROQ_BASE_URL, is_assessment_configured
 
 
 def get_client() -> OpenAI:
@@ -9,5 +9,6 @@ def get_client() -> OpenAI:
         )
     return OpenAI(
         api_key=GROQ_API_KEY,
-        base_url="https://api.groq.com/openai/v1",
+        base_url=GROQ_BASE_URL,
+        max_retries=5,
     )
