@@ -1,3 +1,5 @@
+CHECKLIST_VERSION = "1.0.0"
+
 CHECKLIST = [
     {
         "id": "SEC-01",

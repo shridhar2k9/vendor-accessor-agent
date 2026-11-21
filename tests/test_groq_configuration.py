@@ -70,3 +70,62 @@ class GroqConfigurationTests(unittest.TestCase):
             request_payload["policy_evidence"],
             [{"evidence_id": "E1", "text": "Encryption is enabled at rest."}],
         )
+
+    def test_invalid_finding_is_unclear_and_does_not_stop_later_requirements(self):
+        invalid_response = json.dumps(
+            {
+                "status": "Pass",
+                "explanation": "Supported by the supplied passage.",
+                "citations": [{"evidence_id": "SEC-01-E1"}],
+                "follow_up_question": None,
+            }
+        )
+        valid_response = json.dumps(
+            {
+                "status": "Met",
+                "explanation": "Supported by the supplied passage.",
+                "citations": [{"evidence_id": "SEC-02-E1"}],
+                "follow_up_question": None,
+            }
+        )
+
+        def completion(content):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            )
+
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            completion(invalid_response),
+            completion(invalid_response),
+            completion(valid_response),
+        ]
+        passages = [
+            {
+                "source": "policy.txt",
+                "page": None,
+                "text": "Matching policy clause.",
+            }
+        ]
+
+        with patch.object(assessor, "get_client", return_value=client):
+            invalid_finding = assessor.assess_requirement(
+                "First requirement",
+                passages,
+                [],
+                requirement_id="SEC-01",
+            )
+            following_finding = assessor.assess_requirement(
+                "Second requirement",
+                passages,
+                [],
+                requirement_id="SEC-02",
+            )
+
+        self.assertEqual(invalid_finding["status"], "Unclear")
+        self.assertIn("could not be validated after one retry", invalid_finding["explanation"])
+        self.assertEqual(following_finding["status"], "Met")
+        self.assertEqual(client.chat.completions.create.call_count, 3)
+        retry_request = client.chat.completions.create.call_args_list[1].kwargs
+        retry_payload = json.loads(retry_request["messages"][1]["content"])
+        self.assertIn("response_correction", retry_payload)

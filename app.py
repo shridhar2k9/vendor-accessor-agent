@@ -15,8 +15,9 @@ from src.vendor_risk.config import (
 )
 from src.vendor_risk.document_loader import load_document
 from src.vendor_risk.embedding import embed_texts
+from src.vendor_risk.policy_mapping import find_policy_clauses
 from src.vendor_risk.retrieval import retrieve
-from src.vendor_risk.scoring import CHECKLIST
+from src.vendor_risk.scoring import CHECKLIST, CHECKLIST_VERSION
 from src.vendor_risk.vector_store import add_chunks
 
 
@@ -227,19 +228,26 @@ def _vendor_id(vendor_name: str) -> str:
     return f"{short_name}-{digest}"
 
 
-def _index_files(files: list[str] | str | None, source_type: str, vendor_id: str) -> int:
-    all_chunks = []
+def _load_pages(files: list[str] | str | None) -> list[dict]:
+    pages = []
     for path in _as_file_list(files):
-        pages = load_document(path)
-        all_chunks.extend(chunk_pages(pages))
+        pages.extend(load_document(path))
+    return pages
 
-    if all_chunks:
-        embeddings = embed_texts([chunk["text"] for chunk in all_chunks])
+
+def _index_pages(pages: list[dict], source_type: str, vendor_id: str) -> int:
+    chunks = chunk_pages(pages)
+    if chunks:
+        embeddings = embed_texts([chunk["text"] for chunk in chunks])
     else:
         embeddings = []
 
-    add_chunks(all_chunks, embeddings, source_type, vendor_id)
-    return len(all_chunks)
+    add_chunks(chunks, embeddings, source_type, vendor_id)
+    return len(chunks)
+
+
+def _index_files(files: list[str] | str | None, source_type: str, vendor_id: str) -> int:
+    return _index_pages(_load_pages(files), source_type, vendor_id)
 
 
 def _render_findings(findings: list[dict]) -> str:
@@ -361,7 +369,8 @@ def run_assessment(
 
     vendor_id = _vendor_id(vendor_name)
     try:
-        policy_chunks = _index_files(policy_files, "policy", vendor_id)
+        policy_pages = _load_pages(policy_files)
+        policy_chunks = _index_pages(policy_pages, "policy", vendor_id)
         evidence_chunks = _index_files(evidence_files, "evidence", vendor_id)
     except Exception as exc:
         return f"Document indexing failed: {escape(str(exc))}", ""
@@ -379,17 +388,50 @@ def run_assessment(
             "vendor_name": vendor_name.strip(),
             "intended_use": intended_use.strip(),
         }
+        policy_clauses = find_policy_clauses(
+            policy_pages,
+            [item["id"] for item in CHECKLIST],
+        )
         for item in CHECKLIST:
-            policy_passages = retrieve(item["requirement"], vendor_id, "policy")
-            vendor_passages = retrieve(item["requirement"], vendor_id, "evidence")
+            matching_clauses = policy_clauses[item["id"]]
+            if len(matching_clauses) != 1:
+                if matching_clauses:
+                    explanation = (
+                        f"Multiple policy clauses were labeled {item['id']}; "
+                        "a unique policy mapping is required."
+                    )
+                else:
+                    explanation = (
+                        f"No matching policy clause was found for {item['id']} "
+                        "in the uploaded company policy."
+                    )
+                findings.append({
+                    **item,
+                    "status": "Unclear",
+                    "explanation": explanation,
+                    "citations": [],
+                    "follow_up_question": (
+                        f"Add or confirm one company policy clause labeled "
+                        f"{item['id']} before assessing this control."
+                    ),
+                })
+                continue
+
+            policy_clause = matching_clauses[0]
+            requirement = policy_clause["text"]
+            vendor_passages = retrieve(requirement, vendor_id, "evidence")
             assessment = assess_requirement(
-                item["requirement"],
-                policy_passages,
+                requirement,
+                [policy_clause],
                 vendor_passages,
                 context=context,
                 requirement_id=item["id"],
             )
-            findings.append({**item, **assessment})
+            findings.append({
+                **item,
+                "requirement": requirement,
+                **assessment,
+            })
     except Exception as exc:
         return (
             "AI assessment failed. See the details below.",
@@ -401,6 +443,7 @@ def run_assessment(
 
     return (
         f"Assessment completed for {vendor_name.strip()}. "
+        f"Checklist v{CHECKLIST_VERSION}. "
         f"Indexed {policy_chunks} policy and {evidence_chunks} vendor evidence chunks.",
         _render_findings(findings),
     )

@@ -18,26 +18,39 @@ class CitationValidationError(ValueError):
         )
 
 
+class FindingValidationError(ValueError):
+    pass
+
+
 def _validate_result(
     result: object,
     passages: list[dict],
     evidence_ids: list[str] | None = None,
 ) -> dict:
     if not isinstance(result, dict):
-        raise ValueError("The assessment service returned an invalid response.")
+        raise FindingValidationError(
+            "The assessment service response was not a JSON object."
+        )
 
     status = result.get("status")
     explanation = result.get("explanation")
     citations = result.get("citations")
     follow_up = result.get("follow_up_question")
-    if (
-        not isinstance(status, str)
-        or status not in {"Met", "Unmet", "Unclear"}
-        or not isinstance(explanation, str)
-        or not isinstance(citations, list)
-        or (follow_up is not None and not isinstance(follow_up, str))
-    ):
-        raise ValueError("The assessment service returned an invalid finding.")
+    invalid_fields = []
+    if not isinstance(status, str) or status not in {"Met", "Unmet", "Unclear"}:
+        invalid_fields.append("status")
+    if not isinstance(explanation, str):
+        invalid_fields.append("explanation")
+    if not isinstance(citations, list):
+        invalid_fields.append("citations")
+    if follow_up is not None and not isinstance(follow_up, str):
+        invalid_fields.append("follow_up_question")
+    if invalid_fields:
+        raise FindingValidationError(
+            "The assessment service returned invalid finding fields: "
+            + ", ".join(invalid_fields)
+            + "."
+        )
 
     if evidence_ids is None:
         evidence_ids = [f"E{index + 1}" for index in range(len(passages))]
@@ -121,54 +134,83 @@ def assess_requirement(
         )
         content = response.choices[0].message.content
         if not content:
-            raise ValueError("The assessment service returned an empty response.")
-        return json.loads(content)
+            raise FindingValidationError(
+                "The assessment service returned an empty response."
+            )
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise FindingValidationError(
+                "The assessment service response was not valid JSON."
+            ) from exc
 
     valid_ids = [item["evidence_id"] for item in identified_passages]
     try:
         return _validate_result(
             request_assessment(user_content), passages, valid_ids
         )
-    except CitationValidationError as first_error:
-        # One bounded repair attempt. Only IDs from this requirement's prompt are allowed.
+    except (CitationValidationError, FindingValidationError) as first_error:
+        if isinstance(first_error, CitationValidationError):
+            logger.warning(
+                "Invalid citation IDs for requirement %s: returned=%s allowed=%s",
+                requirement_id or "unspecified",
+                first_error.invalid_ids,
+                first_error.allowed_ids,
+            )
+            retry_content = {
+                **user_content,
+                "citation_correction": {
+                    "previous_invalid_evidence_ids": first_error.invalid_ids,
+                    "valid_evidence_ids": valid_ids,
+                    "instruction": (
+                        "Return the complete corrected JSON finding. Cite only exact "
+                        "IDs from valid_evidence_ids. If none of the supplied passages "
+                        "support the requirement, use status Unclear and citations []."
+                    ),
+                },
+            }
+        else:
+            logger.warning(
+                "Invalid finding for requirement %s: %s",
+                requirement_id or "unspecified",
+                first_error,
+            )
+            retry_content = {
+                **user_content,
+                "response_correction": {
+                    "validation_error": str(first_error),
+                    "instruction": (
+                        "Return the complete finding as one JSON object. Include "
+                        "status as exactly Met, Unmet, or Unclear; explanation as a "
+                        "string; citations as a list of objects containing only valid "
+                        "evidence_id values; and follow_up_question as a string or null."
+                    ),
+                },
+            }
+
         logger.warning(
-            "Invalid citation IDs for requirement %s: returned=%s allowed=%s",
+            "Retrying assessment for requirement %s after response validation failed",
             requirement_id or "unspecified",
-            first_error.invalid_ids,
-            first_error.allowed_ids,
         )
-        retry_content = {
-            **user_content,
-            "citation_correction": {
-                "previous_invalid_evidence_ids": first_error.invalid_ids,
-                "valid_evidence_ids": valid_ids,
-                "instruction": (
-                    "Return the complete corrected JSON finding. Cite only exact IDs "
-                    "from valid_evidence_ids. If none of the supplied passages support "
-                    "the requirement, use status Unclear and citations []."
-                ),
-            },
-        }
         try:
             return _validate_result(
                 request_assessment(retry_content), passages, valid_ids
             )
-        except CitationValidationError as retry_error:
+        except (CitationValidationError, FindingValidationError) as retry_error:
             logger.warning(
-                "Citation repair failed for requirement %s: returned=%s allowed=%s",
+                "Assessment repair failed for requirement %s: %s",
                 requirement_id or "unspecified",
-                retry_error.invalid_ids,
-                retry_error.allowed_ids,
+                retry_error,
             )
             return {
                 "status": "Unclear",
                 "explanation": (
-                    "The evidence reference could not be validated after one retry. "
-                    "A human reviewer must inspect the retrieved evidence."
+                    "The assessment response could not be validated after one retry. "
+                    "A human reviewer must inspect this finding and its evidence."
                 ),
                 "citations": [],
                 "follow_up_question": (
-                    "Please review the evidence passages for this requirement and "
-                    "confirm or correct the assessment."
+                    "Please review the evidence passages and confirm or correct "
+                    "this assessment."
                 ),
             }

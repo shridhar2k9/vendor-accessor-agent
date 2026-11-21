@@ -26,8 +26,15 @@ python app.py
 ```
 
 Upload company policies and vendor evidence, enter the vendor details, then run
-the assessment. Findings are generated for the built-in security checklist and
-are drafts for human review, not approval decisions. The app verifies that
-reported citations match excerpts retrieved from the uploaded documents.
+the assessment. Findings use the versioned built-in checklist (`1.0.0`). Each
+policy clause must be labeled with its control ID (for example, `SEC-01:` at
+the start of a line). The finding uses that clause's uploaded wording and
+retrieves vendor evidence against it. If a control ID is missing or occurs on
+multiple clause headings, that finding is marked **Unclear** with a policy
+mapping explanation; other controls continue. Untagged policy clauses are not
+automatically mapped.
+
+Findings are drafts for human review, not approval decisions. The app verifies
+that reported citations match excerpts retrieved from the uploaded documents.
 Relevant retrieved excerpts are sent to Groq for analysis; do not use this
 integration with documents you are not permitted to share with that provider.
