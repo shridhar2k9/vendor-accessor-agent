@@ -9,6 +9,7 @@ import gradio as gr
 
 from src.vendor_risk.chunking import chunk_pages
 from src.vendor_risk.assessor import assess_requirement
+from src.vendor_risk.agent import investigate
 from src.vendor_risk.config import (
     GROQ_MODEL_IS_PLACEHOLDER,
     is_assessment_configured,
@@ -261,9 +262,17 @@ def _render_findings(findings: list[dict]) -> str:
             page_label = (
                 f' · page {citation["page"]}' if citation["page"] is not None else ""
             )
+            source_label = escape(citation["document"])
+            if citation.get("source_type") == "public":
+                source_label = (
+                    f'<a href="{escape(citation["url"])}" target="_blank" '
+                    'rel="noopener noreferrer">'
+                    f'{source_label}</a> · public source · accessed '
+                    f'{escape(citation["access_date"])}'
+                )
             citations += (
                 '<div class="finding-evidence">'
-                f'<strong>{escape(citation["document"])}</strong>{page_label}'
+                f'<strong>{source_label}</strong>{page_label}'
                 f': “{escape(citation["excerpt"])}”</div>'
             )
         follow_up = finding["follow_up_question"]
@@ -432,6 +441,41 @@ def run_assessment(
                 "requirement": requirement,
                 **assessment,
             })
+
+        # Agentic investigation is bounded and only runs for V2 Unclear findings.
+        # Tenant/vendor scope is derived here; model arguments never carry vendor IDs.
+        additional = investigate(
+            findings,
+            vendor_id=vendor_id,
+            vendor=vendor_name.strip(),
+            control_ids={item["id"] for item in CHECKLIST},
+        )
+        for finding in findings:
+            evidence = additional.get(finding["id"], [])
+            if finding["status"] != "Unclear" or not evidence:
+                continue
+            followups = [x["question"] for x in evidence
+                         if x.get("source_type") == "analyst_follow_up"]
+            passages = []
+            for item in evidence:
+                if item.get("source_type") == "analyst_follow_up":
+                    continue
+                if item.get("source_type") == "public":
+                    passages.append({
+                        "text": item["excerpt"], "source": item["title"],
+                        "page": None, "source_type": "public",
+                        "url": item["url"], "access_date": item["access_date"],
+                    })
+                else:
+                    passages.append(item)
+            if passages:
+                final = assess_requirement(
+                    finding["requirement"], [], passages, context=context,
+                    requirement_id=finding["id"],
+                )
+                finding.update(final)
+            if followups:
+                finding["follow_up_question"] = followups[-1]
     except Exception as exc:
         return (
             "AI assessment failed. See the details below.",

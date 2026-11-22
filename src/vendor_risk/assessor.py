@@ -7,6 +7,34 @@ from .prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
+_STRICT_SCHEMA_MODELS = {
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
+    "qwen/qwen3.8-27b",
+    "meta-models/muse-spark-open",
+}
+
+FINDING_SCHEMA = {
+    "name": "vendor_risk_finding",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "enum": ["Met", "Unmet", "Unclear"]},
+            "explanation": {"type": "string"},
+            "citations": {
+                "type": "array",
+                "items": {"type": "object", "properties": {
+                    "evidence_id": {"type": "string"},
+                }, "required": ["evidence_id"], "additionalProperties": False},
+            },
+            "follow_up_question": {"type": ["string", "null"]},
+        },
+        "required": ["status", "explanation", "citations", "follow_up_question"],
+        "additionalProperties": False,
+    },
+}
+
 
 class CitationValidationError(ValueError):
     def __init__(self, invalid_ids: list[str], allowed_ids: list[str]):
@@ -72,11 +100,18 @@ def _validate_result(
         if passage is None:
             invalid_ids.append(evidence_id)
             continue
-        validated_citations.append({
+        validated_citation = {
             "document": passage["source"],
             "page": passage["page"],
             "excerpt": passage["text"],
-        })
+        }
+        if passage.get("source_type") == "public":
+            validated_citation.update({
+                "source_type": "public",
+                "url": passage["url"],
+                "access_date": passage["access_date"],
+            })
+        validated_citations.append(validated_citation)
 
     allowed_ids = list(supplied_passages)
     if invalid_ids:
@@ -122,16 +157,24 @@ def assess_requirement(
     }
 
     def request_assessment(request_content: dict) -> object:
-        response = get_client().chat.completions.create(
+        request_args = dict(
             model=GROQ_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(request_content)},
             ],
             temperature=0,
-            response_format={"type": "json_object"},
             extra_body={"include_reasoning": False},
         )
+        if GROQ_MODEL.lower() in _STRICT_SCHEMA_MODELS:
+            request_args["response_format"] = {
+                "type": "json_schema", "json_schema": FINDING_SCHEMA,
+            }
+        else:
+            # Groq JSON Object Mode supports a wider model set; Python still
+            # validates every field and citation before accepting the finding.
+            request_args["response_format"] = {"type": "json_object"}
+        response = get_client().chat.completions.create(**request_args)
         content = response.choices[0].message.content
         if not content:
             raise FindingValidationError(
@@ -205,8 +248,10 @@ def assess_requirement(
             return {
                 "status": "Unclear",
                 "explanation": (
-                    "The assessment response could not be validated after one retry. "
-                    "A human reviewer must inspect this finding and its evidence."
+                    "The model response did not match the required finding format, "
+                    "even after one repair attempt. This finding remains Unclear; "
+                    "a human reviewer must inspect the evidence and can rerun it "
+                    "after checking the configured model."
                 ),
                 "citations": [],
                 "follow_up_question": (
