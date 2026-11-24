@@ -4,5 +4,6 @@ _model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Convert text strings into normalized embedding vectors."""
     vectors = _model.encode(texts, normalize_embeddings=True)
     return vectors.tolist()

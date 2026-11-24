@@ -5,6 +5,7 @@ _collection = _client.get_or_create_collection("vendor_risk_documents")
 
 
 def add_chunks(chunks, embeddings, source_type: str, vendor_id: str):
+    """Replace stored chunks for a vendor and source type with new chunks."""
     _collection.delete(
         where={
             "$and": [
@@ -39,4 +40,5 @@ def add_chunks(chunks, embeddings, source_type: str, vendor_id: str):
 
 
 def get_collection():
+    """Return the shared persistent Chroma document collection."""
     return _collection

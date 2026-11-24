@@ -18,4 +18,5 @@ GROQ_BASE_URL = (
 
 
 def is_assessment_configured() -> bool:
+    """Return whether an API key and usable model configuration are available."""
     return bool(GROQ_API_KEY and GROQ_MODEL and not GROQ_MODEL_IS_PLACEHOLDER)

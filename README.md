@@ -39,6 +39,91 @@ that reported citations match excerpts retrieved from the uploaded documents.
 Relevant retrieved excerpts are sent to Groq for analysis; do not use this
 integration with documents you are not permitted to share with that provider.
 
+## Architecture flow
+
+```mermaid
+flowchart TD
+    A[Upload policy and vendor evidence] --> B[Map each checklist control to one policy clause]
+    B --> C[Version 2 retrieval and cited draft finding]
+    C --> D{Unclear with a mapped clause?}
+    D -- No --> H[Show draft finding]
+    D -- Yes --> E[Agent requests approved tools]
+    E --> F[Re-search same vendor evidence]
+    E --> G[Search approved public domains]
+    G --> I[Open relevant allowlisted pages]
+    F --> J[App validates arguments and records results]
+    I --> J
+    E --> K[Draft analyst follow-up]
+    K --> J
+    J --> L[Separate structured assessment; conflicts stay Unclear]
+    L --> M[Analyst changes/accepts status and adds note]
+    M --> N[Save locally; finalize after every control is reviewed]
+```
+
+The model only requests tools. Python validates control IDs and executes them;
+the vendor ID comes from the current assessment, never a model argument. There
+is a hard cap of three tool calls per assessment investigation. Public research
+uses Tavily only when both `TAVILY_API_KEY` and a non-empty
+`APPROVED_PUBLIC_DOMAINS` exact-host allowlist are configured. The agent can
+form a focused question, search those domains, open returned pages, and compare
+the resulting public excerpts with uploaded evidence. The available call budget
+may end before every useful page can be opened; unresolved or conflicting claims
+remain **Unclear**. Search and page records retain title, URL, access date, and
+excerpt. Public citations are labelled separately from uploaded evidence.
+
+## Human review and local records
+
+For each finding, select the control, accept or change its status, add an
+analyst note, and save the finding review. A note is required when changing the
+model's status. **Save draft** writes the current record under
+`storage/reviews/`; **Finalize assessment** refuses to finalize until every
+finding has an analyst review. Finalization records the reviewed statuses and
+notes locally. This prototype does not deploy or send review decisions to an
+external system.
+
+## Offline evaluation
+
+Run the deterministic contract evaluation with:
+
+```powershell
+\.venv\Scripts\python.exe -m unittest tests.test_v3_evaluation tests.test_assessor -v
+```
+
+The repository contains no vendor sample documents in `data/`, so this small
+set uses synthetic access-review excerpts and a mocked model response. It checks
+the application contract and citation/guardrail plumbing; it does not measure
+Groq answer quality or validate live public search.
+
+| Case | Expected | Actual | Citation/review check |
+|---|---|---|---|
+| Quarterly commitment supports policy | Met | Met | Supplied IDs resolve; analyst review required |
+| Annual commitment falls short | Unmet | Unmet | Supplied IDs resolve; analyst review required |
+| Uploaded evidence contains quarterly and annual claims | Unclear | Unclear | Citations resolve; follow-up requested |
+| Vendor evidence missing | Unclear | Unclear | No vendor citation fabricated; follow-up requested |
+| Public quarterly claim conflicts with uploaded annual claim | Unclear | Unclear | Public URL/date retained separately; follow-up requested |
+| Model cites an unknown evidence ID | Rejected | Rejected | `CitationValidationError` |
+| Vendor text contains prompt-injection instructions | Treat as untrusted | Prompt contract checked | Analyst remains final decision gate |
+| Tool requests an unknown control ID | Reject tool request | Rejected | Search is not dispatched |
+
+The model responses in this matrix are fixtures chosen to exercise expected
+states. Before presenting this as an accuracy evaluation, run these cases with
+the actual uploaded documents and configured Groq/public-search services, then
+record the real outputs and analyst review decisions.
+
+## Demo sequence
+
+1. Configure Groq. For public research, also configure Tavily and the approved
+   host allowlist.
+2. Start the app locally with `python app.py` and upload one labelled policy
+   document and vendor evidence.
+3. Run the assessment. Show an ordinary cited finding and an unclear finding
+   that triggers targeted investigation. With public search enabled, show a
+   public page citation and its URL/access date.
+4. Select a control in **Analyst review**, confirm or change its status, add a
+   note for any status change, and save the review.
+5. Save the draft, review all findings, and finalize. Show the local JSON record
+   under `storage/reviews/`.
+
 ## Bounded agentic investigation (Version 3)
 
 Each control first receives the Version 2 assessment. Only unclear findings with

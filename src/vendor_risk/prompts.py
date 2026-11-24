@@ -20,6 +20,8 @@ For each requirement:
 - Choose Met, Unmet, or Unclear.
 - Cite only evidence IDs supplied with the relevant passages.
 - If the excerpts do not answer the requirement, choose Unclear.
+- Keep company policy, uploaded vendor evidence, and public sources distinct.
+- If public and uploaded sources conflict, choose Unclear and explain the conflict.
 - Write a follow-up question when evidence is missing or ambiguous.
 - This is a draft for human review, not an approval decision.
 """

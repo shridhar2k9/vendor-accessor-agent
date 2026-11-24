@@ -1,11 +1,12 @@
 """Application-controlled allow-listed investigation tools."""
 from __future__ import annotations
 
-from .retrieval import retrieve
-from .research import search_public_vendor_sources
+from .research import open_public_vendor_source, search_public_vendor_sources
 
 
 def search_vendor_evidence(control_id: str, query: str, *, vendor_id: str) -> list[dict]:
+    """Search uploaded evidence for a specific control and vendor scope."""
+    from .retrieval import retrieve
     if not control_id or len(control_id) > 40 or not query.strip():
         raise ValueError("Invalid control ID or search query")
     # vendor_id is always supplied by the application, never the model.
@@ -14,6 +15,7 @@ def search_vendor_evidence(control_id: str, query: str, *, vendor_id: str) -> li
 
 def dispatch_tool(name: str, arguments: dict, *, vendor_id: str, vendor: str,
                   policy_control_ids: set[str]) -> list[dict]:
+    """Dispatch one model-requested tool after validating its control scope."""
     if name == "search_vendor_evidence":
         control_id = arguments.get("control_id")
         if control_id not in policy_control_ids:
@@ -24,6 +26,10 @@ def dispatch_tool(name: str, arguments: dict, *, vendor_id: str, vendor: str,
         if arguments.get("control_id") not in policy_control_ids:
             raise ValueError("Unknown control ID")
         return search_public_vendor_sources(vendor, str(arguments.get("question", "")))
+    if name == "open_public_vendor_source":
+        if arguments.get("control_id") not in policy_control_ids:
+            raise ValueError("Unknown control ID")
+        return [open_public_vendor_source(str(arguments.get("url", "")))]
     if name == "draft_vendor_followup":
         control_id = arguments.get("control_id")
         if control_id not in policy_control_ids:

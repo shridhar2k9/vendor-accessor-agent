@@ -38,6 +38,7 @@ FINDING_SCHEMA = {
 
 class CitationValidationError(ValueError):
     def __init__(self, invalid_ids: list[str], allowed_ids: list[str]):
+        """Record invalid citations returned by the model."""
         self.invalid_ids = invalid_ids
         self.allowed_ids = allowed_ids
         super().__init__(
@@ -55,6 +56,7 @@ def _validate_result(
     passages: list[dict],
     evidence_ids: list[str] | None = None,
 ) -> dict:
+    """Validate a model finding and resolve its evidence IDs to source passages."""
     if not isinstance(result, dict):
         raise FindingValidationError(
             "The assessment service response was not a JSON object."
@@ -134,12 +136,19 @@ def assess_requirement(
     context: dict | None = None,
     requirement_id: str | None = None,
 ) -> dict:
+    """Assess one requirement against policy and vendor evidence passages.
+
+    The model response is validated and repaired once before an Unclear fallback
+    is returned.
+    """
     passages = policy_passages + vendor_passages
     prefix = re.sub(r"[^A-Za-z0-9_-]", "", requirement_id or "").upper()
     identified_passages = [
         {
             "evidence_id": f"{prefix}-E{index + 1}" if prefix else f"E{index + 1}",
             "text": passage["text"],
+            "source_type": passage.get("source_type", "uploaded_document"),
+            "source": passage.get("source", ""),
         }
         for index, passage in enumerate(passages)
     ]
@@ -157,6 +166,7 @@ def assess_requirement(
     }
 
     def request_assessment(request_content: dict) -> object:
+        """Send one assessment request to Groq and decode its JSON response."""
         request_args = dict(
             model=GROQ_MODEL,
             messages=[

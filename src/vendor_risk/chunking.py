@@ -1,4 +1,5 @@
 def chunk_pages(pages: list[dict], size: int = 1000, overlap: int = 150):
+    """Split page text into overlapping chunks while preserving page metadata."""
     chunks = []
 
     for item in pages:

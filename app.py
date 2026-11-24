@@ -3,7 +3,9 @@ from __future__ import annotations
 from html import escape
 from pathlib import Path
 import hashlib
+import json
 import re
+from uuid import uuid4
 
 import gradio as gr
 
@@ -200,12 +202,14 @@ footer, header { display: none !important; }
 
 
 def _file_count(files: list[str] | str | None) -> int:
+    """Count selected files consistently across string and list inputs."""
     if not files:
         return 0
     return len(files) if isinstance(files, list) else 1
 
 
 def _file_list_html(files: list[str] | str | None) -> str:
+    """Render the selected file names as an escaped HTML file list."""
     if not files:
         return '<div class="file-list"><span class="file-empty">No files selected</span></div>'
     paths = files if isinstance(files, list) else [files]
@@ -217,12 +221,14 @@ def _file_list_html(files: list[str] | str | None) -> str:
 
 
 def _as_file_list(files: list[str] | str | None) -> list[str]:
+    """Normalize a single path or list of paths into a list."""
     if not files:
         return []
     return files if isinstance(files, list) else [files]
 
 
 def _vendor_id(vendor_name: str) -> str:
+    """Create a stable, filesystem-safe vendor identifier."""
     normalized = re.sub(r"[^a-z0-9]+", "-", vendor_name.strip().lower()).strip("-")
     short_name = normalized[:40] or "vendor"
     digest = hashlib.sha256(vendor_name.strip().lower().encode("utf-8")).hexdigest()[:12]
@@ -230,6 +236,7 @@ def _vendor_id(vendor_name: str) -> str:
 
 
 def _load_pages(files: list[str] | str | None) -> list[dict]:
+    """Load and combine pages from all selected documents."""
     pages = []
     for path in _as_file_list(files):
         pages.extend(load_document(path))
@@ -237,6 +244,7 @@ def _load_pages(files: list[str] | str | None) -> list[dict]:
 
 
 def _index_pages(pages: list[dict], source_type: str, vendor_id: str) -> int:
+    """Chunk, embed, and store pages for one document source type."""
     chunks = chunk_pages(pages)
     if chunks:
         embeddings = embed_texts([chunk["text"] for chunk in chunks])
@@ -248,10 +256,12 @@ def _index_pages(pages: list[dict], source_type: str, vendor_id: str) -> int:
 
 
 def _index_files(files: list[str] | str | None, source_type: str, vendor_id: str) -> int:
+    """Load and index all selected files for a vendor and source type."""
     return _index_pages(_load_pages(files), source_type, vendor_id)
 
 
 def _render_findings(findings: list[dict]) -> str:
+    """Render assessment findings and analyst review details as HTML cards."""
     counts = {status: 0 for status in ("Met", "Unmet", "Unclear")}
     cards = []
     for finding in findings:
@@ -281,13 +291,20 @@ def _render_findings(findings: list[dict]) -> str:
                 '<div class="finding-evidence"><strong>Follow-up:</strong> '
                 f'{escape(follow_up)}</div>'
             )
+        if finding.get("analyst_reviewed"):
+            citations += '<div class="finding-evidence"><strong>Analyst reviewed</strong></div>'
+        if finding.get("analyst_note"):
+            citations += (
+                '<div class="finding-evidence"><strong>Analyst note:</strong> '
+                f'{escape(finding["analyst_note"])}</div>'
+            )
         cards.append(
             '<div class="finding-card">'
             '<div class="finding-heading">'
             f'{escape(finding["id"])} · {escape(finding["severity"].title())}'
             f'<span class="finding-status {status.lower()}">{escape(status)}</span>'
             '</div>'
-            f'<p class="finding-copy">{escape(finding["requirement"])}</p>'
+            f'<p class="finding-copy">{escape(finding.get("requirement", "Policy clause mapping unavailable."))}</p>'
             f'<p class="finding-copy">{escape(finding["explanation"])}</p>'
             f'{citations}</div>'
         )
@@ -303,6 +320,7 @@ def _render_findings(findings: list[dict]) -> str:
 
 
 def _service_notice() -> str:
+    """Describe the current AI service configuration and setup status."""
     if is_assessment_configured():
         return (
             '<div class="service-notice">AI assessment is configured. '
@@ -329,6 +347,7 @@ def document_status(
     policy_files: list[str] | str | None,
     evidence_files: list[str] | str | None,
 ) -> tuple[str, str, str]:
+    """Summarize uploaded policy and evidence documents for the UI."""
     policy_count = _file_count(policy_files)
     evidence_count = _file_count(evidence_files)
     total = policy_count + evidence_count
@@ -353,7 +372,17 @@ def run_assessment(
     intended_use: str,
     policy_files: list[str] | str | None,
     evidence_files: list[str] | str | None,
-) -> tuple[str, str]:
+    include_review_data: bool = False,
+):
+    """Validate inputs, index documents, assess controls, and render findings."""
+    def result(feedback: str, findings_html: str, findings: list[dict] | None = None):
+        """Format the Gradio result tuple based on review-data settings."""
+        if include_review_data:
+            state = ({"draft_id": str(uuid4()), "findings": findings}
+                     if findings else None)
+            return feedback, findings_html, state
+        return feedback, findings_html
+
     missing = []
     if not (vendor_name or "").strip():
         missing.append("vendor name")
@@ -365,13 +394,13 @@ def run_assessment(
         missing.append("vendor evidence document")
 
     if missing:
-        return (
+        return result(
             "Complete these items before assessing: " + ", ".join(missing) + ".",
             "",
         )
 
     if not is_assessment_configured():
-        return (
+        return result(
             "AI assessment is not configured. See the setup instructions below.",
             _service_notice(),
         )
@@ -382,10 +411,10 @@ def run_assessment(
         policy_chunks = _index_pages(policy_pages, "policy", vendor_id)
         evidence_chunks = _index_files(evidence_files, "evidence", vendor_id)
     except Exception as exc:
-        return f"Document indexing failed: {escape(str(exc))}", ""
+        return result(f"Document indexing failed: {escape(str(exc))}", "")
 
     if policy_chunks == 0 or evidence_chunks == 0:
-        return (
+        return result(
             "Documents were uploaded, but no text chunks were extracted. "
             "Check that the files contain readable text.",
             "",
@@ -393,6 +422,7 @@ def run_assessment(
 
     try:
         findings = []
+        uploaded_evidence = {}
         context = {
             "vendor_name": vendor_name.strip(),
             "intended_use": intended_use.strip(),
@@ -429,6 +459,7 @@ def run_assessment(
             policy_clause = matching_clauses[0]
             requirement = policy_clause["text"]
             vendor_passages = retrieve(requirement, vendor_id, "evidence")
+            uploaded_evidence[item["id"]] = vendor_passages
             assessment = assess_requirement(
                 requirement,
                 [policy_clause],
@@ -469,6 +500,9 @@ def run_assessment(
                 else:
                     passages.append(item)
             if passages:
+                # Include the original V2 evidence so public claims can be compared
+                # directly, without conflating public and uploaded source records.
+                passages = uploaded_evidence.get(finding["id"], []) + passages
                 final = assess_requirement(
                     finding["requirement"], [], passages, context=context,
                     requirement_id=finding["id"],
@@ -477,7 +511,7 @@ def run_assessment(
             if followups:
                 finding["follow_up_question"] = followups[-1]
     except Exception as exc:
-        return (
+        return result(
             "AI assessment failed. See the details below.",
             '<div class="service-notice">The assessment did not complete. '
             'Review the error details below. Check Groq settings or network only '
@@ -485,12 +519,62 @@ def run_assessment(
             f'<br><strong>Details:</strong> {escape(str(exc))}</div>',
         )
 
-    return (
+    for finding in findings:
+        finding["model_status"] = finding["status"]
+        finding.setdefault("analyst_reviewed", False)
+        finding.setdefault("analyst_note", "")
+    return result(
         f"Assessment completed for {vendor_name.strip()}. "
         f"Checklist v{CHECKLIST_VERSION}. "
         f"Indexed {policy_chunks} policy and {evidence_chunks} vendor evidence chunks.",
         _render_findings(findings),
+        findings,
     )
+
+
+def _write_review_record(state: dict, finalized: bool = False) -> str:
+    """Persist an assessment draft or finalized record as JSON."""
+    directory = Path("storage") / "reviews"
+    directory.mkdir(parents=True, exist_ok=True)
+    record = {"draft_id": state["draft_id"], "finalized": finalized,
+              "findings": state["findings"]}
+    path = directory / f"{state['draft_id']}.json"
+    path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+    return str(path)
+
+
+def save_finding_review(state, control_id, status, note):
+    """Validate and save an analyst review for one finding."""
+    if not state or status not in {"Met", "Unmet", "Unclear"}:
+        return state, "", "Run an assessment and choose a valid status first."
+    updated = {**state, "findings": [dict(item) for item in state["findings"]]}
+    target = next((item for item in updated["findings"] if item["id"] == control_id), None)
+    if target is None:
+        return state, _render_findings(state["findings"]), "That control is not part of this assessment."
+    if status != target.get("model_status", target["status"]) and not (note or "").strip():
+        return state, _render_findings(state["findings"]), "Add an analyst note when changing the model's status."
+    target.update({"status": status, "analyst_note": (note or "").strip(),
+                   "analyst_reviewed": True})
+    path = _write_review_record(updated)
+    return updated, _render_findings(updated["findings"]), f"Saved analyst review for {control_id} to {path}."
+
+
+def save_draft(state):
+    """Persist the current assessment state as a review draft."""
+    if not state:
+        return "Run an assessment before saving a draft."
+    return f"Draft saved locally to {_write_review_record(state)}."
+
+
+def finalize_review(state):
+    """Finalize the assessment only after every finding has been reviewed."""
+    if not state:
+        return "Run an assessment before finalizing."
+    pending = [item["id"] for item in state["findings"]
+               if not item.get("analyst_reviewed")]
+    if pending:
+        return "Review every finding before finalizing: " + ", ".join(pending)
+    return f"Assessment finalized locally: {_write_review_record(state, finalized=True)}"
 
 
 with gr.Blocks(title="AI Vendor Risk Assessor") as demo:
@@ -624,16 +708,40 @@ with gr.Blocks(title="AI Vendor Risk Assessor") as demo:
                 '<div class="empty-copy">Run an assessment to review evidence against the '
                 'security checklist. Findings remain a draft for human review.</div></div>'
             )
+            review_state = gr.State(None)
+            with gr.Column(elem_classes="section-card"):
+                gr.HTML('<div class="section-title">Analyst review</div>'
+                        '<div class="section-description">Select a finding, confirm or change its status, add a note, then save that review.</div>')
+                review_control = gr.Dropdown(
+                    choices=[item["id"] for item in CHECKLIST],
+                    label="Control to review",
+                )
+                with gr.Row():
+                    review_status = gr.Dropdown(
+                        choices=["Met", "Unmet", "Unclear"], value="Unclear",
+                        label="Analyst status",
+                    )
+                    review_note = gr.Textbox(label="Analyst note", lines=2)
+                with gr.Row():
+                    save_review_button = gr.Button("Save finding review")
+                    review_feedback = gr.Markdown("")
             run_button.click(
-                fn=run_assessment,
+                fn=lambda *args: run_assessment(*args, include_review_data=True),
                 inputs=[vendor_name, intended_use, policy_files, evidence_files],
-                outputs=[assessment_feedback, assessment_findings],
+                outputs=[assessment_feedback, assessment_findings, review_state],
+            )
+            save_review_button.click(
+                fn=save_finding_review,
+                inputs=[review_state, review_control, review_status, review_note],
+                outputs=[review_state, assessment_findings, review_feedback],
             )
 
             with gr.Row(elem_classes="footer-actions"):
-                gr.Button("Save draft", interactive=False)
-                gr.HTML('<div class="footer-note">Review and finalization become available after assessment.</div>')
-                gr.Button("Finalize assessment", variant="primary", interactive=False)
+                save_draft_button = gr.Button("Save draft")
+                gr.HTML('<div class="footer-note">Finalization is enabled after every finding has an analyst review.</div>')
+                finalize_button = gr.Button("Finalize assessment", variant="primary")
+            save_draft_button.click(fn=save_draft, inputs=[review_state], outputs=[review_feedback])
+            finalize_button.click(fn=finalize_review, inputs=[review_state], outputs=[review_feedback])
 
 
 if __name__ == "__main__":

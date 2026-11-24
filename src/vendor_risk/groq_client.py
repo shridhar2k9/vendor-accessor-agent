@@ -3,6 +3,7 @@ from .config import GROQ_API_KEY, GROQ_BASE_URL, is_assessment_configured
 
 
 def get_client() -> OpenAI:
+    """Create a configured Groq OpenAI-compatible client."""
     if not is_assessment_configured():
         raise RuntimeError(
             "Set GROQ_API_KEY in the environment or .env file to enable AI findings."

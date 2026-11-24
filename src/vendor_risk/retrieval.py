@@ -3,6 +3,7 @@ from .vector_store import get_collection
 
 
 def retrieve(query: str, vendor_id: str, source_type: str, k: int = 4) -> list[dict]:
+    """Retrieve the closest evidence passages for a vendor and source type."""
     collection = get_collection()
     query_embedding = embed_texts([query])[0]
 
