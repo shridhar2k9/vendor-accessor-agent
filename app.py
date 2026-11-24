@@ -18,9 +18,11 @@ from src.vendor_risk.config import (
 )
 from src.vendor_risk.document_loader import load_document
 from src.vendor_risk.embedding import embed_texts
-from src.vendor_risk.policy_mapping import find_policy_clauses
+from src.vendor_risk.policy_extractor import (
+    PolicyExtractionError,
+    extract_policy_controls,
+)
 from src.vendor_risk.retrieval import retrieve
-from src.vendor_risk.scoring import CHECKLIST, CHECKLIST_VERSION
 from src.vendor_risk.vector_store import add_chunks
 
 
@@ -301,7 +303,8 @@ def _render_findings(findings: list[dict]) -> str:
         cards.append(
             '<div class="finding-card">'
             '<div class="finding-heading">'
-            f'{escape(finding["id"])} · {escape(finding["severity"].title())}'
+            f'{escape(finding["id"])} · {escape(finding["title"])} · '
+            f'{escape(finding["severity"].title())}'
             f'<span class="finding-status {status.lower()}">{escape(status)}</span>'
             '</div>'
             f'<p class="finding-copy">{escape(finding.get("requirement", "Policy clause mapping unavailable."))}</p>'
@@ -408,6 +411,23 @@ def run_assessment(
     vendor_id = _vendor_id(vendor_name)
     try:
         policy_pages = _load_pages(policy_files)
+        controls = extract_policy_controls(policy_pages)
+    except PolicyExtractionError as exc:
+        return result(
+            "Could not build a checklist from the uploaded company policy.",
+            f'<div class="service-notice">{escape(str(exc))}</div>',
+        )
+    except Exception as exc:
+        return result(f"Policy reading failed: {escape(str(exc))}", "")
+
+    if not controls:
+        return result(
+            "No actionable privacy or security requirements were extracted from the uploaded policy.",
+            '<div class="service-notice">Check that the policy contains readable '
+            'text and explicit obligations, then try a text-based PDF, DOCX, or TXT file.</div>',
+        )
+
+    try:
         policy_chunks = _index_pages(policy_pages, "policy", vendor_id)
         evidence_chunks = _index_files(evidence_files, "evidence", vendor_id)
     except Exception as exc:
@@ -427,42 +447,13 @@ def run_assessment(
             "vendor_name": vendor_name.strip(),
             "intended_use": intended_use.strip(),
         }
-        policy_clauses = find_policy_clauses(
-            policy_pages,
-            [item["id"] for item in CHECKLIST],
-        )
-        for item in CHECKLIST:
-            matching_clauses = policy_clauses[item["id"]]
-            if len(matching_clauses) != 1:
-                if matching_clauses:
-                    explanation = (
-                        f"Multiple policy clauses were labeled {item['id']}; "
-                        "a unique policy mapping is required."
-                    )
-                else:
-                    explanation = (
-                        f"No matching policy clause was found for {item['id']} "
-                        "in the uploaded company policy."
-                    )
-                findings.append({
-                    **item,
-                    "status": "Unclear",
-                    "explanation": explanation,
-                    "citations": [],
-                    "follow_up_question": (
-                        f"Add or confirm one company policy clause labeled "
-                        f"{item['id']} before assessing this control."
-                    ),
-                })
-                continue
-
-            policy_clause = matching_clauses[0]
-            requirement = policy_clause["text"]
+        for item in controls:
+            requirement = item["requirement"]
             vendor_passages = retrieve(requirement, vendor_id, "evidence")
             uploaded_evidence[item["id"]] = vendor_passages
             assessment = assess_requirement(
                 requirement,
-                [policy_clause],
+                item["policy_evidence"],
                 vendor_passages,
                 context=context,
                 requirement_id=item["id"],
@@ -479,7 +470,7 @@ def run_assessment(
             findings,
             vendor_id=vendor_id,
             vendor=vendor_name.strip(),
-            control_ids={item["id"] for item in CHECKLIST},
+            control_ids={item["id"] for item in controls},
         )
         for finding in findings:
             evidence = additional.get(finding["id"], [])
@@ -504,7 +495,8 @@ def run_assessment(
                 # directly, without conflating public and uploaded source records.
                 passages = uploaded_evidence.get(finding["id"], []) + passages
                 final = assess_requirement(
-                    finding["requirement"], [], passages, context=context,
+                    finding["requirement"], finding["policy_evidence"],
+                    passages, context=context,
                     requirement_id=finding["id"],
                 )
                 finding.update(final)
@@ -525,11 +517,25 @@ def run_assessment(
         finding.setdefault("analyst_note", "")
     return result(
         f"Assessment completed for {vendor_name.strip()}. "
-        f"Checklist v{CHECKLIST_VERSION}. "
+        f"Extracted {len(controls)} policy controls. "
         f"Indexed {policy_chunks} policy and {evidence_chunks} vendor evidence chunks.",
         _render_findings(findings),
         findings,
     )
+
+
+def run_assessment_ui(vendor_name, intended_use, policy_files, evidence_files):
+    """Run assessment and populate the review selector from extracted controls."""
+    feedback, findings_html, state = run_assessment(
+        vendor_name, intended_use, policy_files, evidence_files,
+        include_review_data=True,
+    )
+    choices = []
+    if state:
+        choices = [(f'{item["id"]} — {item["title"]}', item["id"])
+                   for item in state["findings"]]
+    selected = state["findings"][0]["id"] if state and choices else None
+    return feedback, findings_html, state, gr.update(choices=choices, value=selected)
 
 
 def _write_review_record(state: dict, finalized: bool = False) -> str:
@@ -557,6 +563,17 @@ def save_finding_review(state, control_id, status, note):
                    "analyst_reviewed": True})
     path = _write_review_record(updated)
     return updated, _render_findings(updated["findings"]), f"Saved analyst review for {control_id} to {path}."
+
+
+def review_selection(state, control_id):
+    """Load a finding's current draft status and saved analyst note into the form."""
+    if not state or not control_id:
+        return gr.update(value="Unclear"), ""
+    finding = next((item for item in state["findings"]
+                    if item["id"] == control_id), None)
+    if not finding:
+        return gr.update(value="Unclear"), ""
+    return gr.update(value=finding["status"]), finding.get("analyst_note", "")
 
 
 def save_draft(state):
@@ -609,7 +626,7 @@ with gr.Blocks(title="AI Vendor Risk Assessor") as demo:
                 gr.HTML('<div class="breadcrumbs">Assessments&nbsp; / &nbsp;New assessment</div>')
                 gr.HTML(
                     '<div class="policy-pill"><span class="policy-dot"></span>'
-                    "Policy set: Core v1.0</div>"
+                    "Controls extracted from uploaded policy</div>"
                 )
             gr.HTML(
                 '<h1 class="page-title">AI Vendor Risk Assessor</h1>'
@@ -712,10 +729,7 @@ with gr.Blocks(title="AI Vendor Risk Assessor") as demo:
             with gr.Column(elem_classes="section-card"):
                 gr.HTML('<div class="section-title">Analyst review</div>'
                         '<div class="section-description">Select a finding, confirm or change its status, add a note, then save that review.</div>')
-                review_control = gr.Dropdown(
-                    choices=[item["id"] for item in CHECKLIST],
-                    label="Control to review",
-                )
+                review_control = gr.Dropdown(choices=[], label="Control to review")
                 with gr.Row():
                     review_status = gr.Dropdown(
                         choices=["Met", "Unmet", "Unclear"], value="Unclear",
@@ -726,14 +740,20 @@ with gr.Blocks(title="AI Vendor Risk Assessor") as demo:
                     save_review_button = gr.Button("Save finding review")
                     review_feedback = gr.Markdown("")
             run_button.click(
-                fn=lambda *args: run_assessment(*args, include_review_data=True),
+                fn=run_assessment_ui,
                 inputs=[vendor_name, intended_use, policy_files, evidence_files],
-                outputs=[assessment_feedback, assessment_findings, review_state],
+                outputs=[assessment_feedback, assessment_findings, review_state,
+                         review_control],
             )
             save_review_button.click(
                 fn=save_finding_review,
                 inputs=[review_state, review_control, review_status, review_note],
                 outputs=[review_state, assessment_findings, review_feedback],
+            )
+            review_control.change(
+                fn=review_selection,
+                inputs=[review_state, review_control],
+                outputs=[review_status, review_note],
             )
 
             with gr.Row(elem_classes="footer-actions"):

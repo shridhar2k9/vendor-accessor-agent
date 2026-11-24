@@ -99,6 +99,23 @@ class AssessmentFlowTests(unittest.TestCase):
                 )
             )
         )
+        def extract_fixture_controls(pages):
+            text = "\n".join(page["text"] for page in pages)
+            controls = []
+            for item in CHECKLIST:
+                line = next((line for line in text.splitlines()
+                             if line.startswith(f"{item['id']}:") ), None)
+                if line:
+                    controls.append({
+                        "id": item["id"], "title": item["id"],
+                        "requirement": line,
+                        "severity": item["severity"],
+                        "policy_evidence": [{
+                            "text": line, "source": "company-policy.txt",
+                            "page": None, "source_type": "company_policy",
+                        }],
+                    })
+            return controls
         with (
             patch.object(app, "is_assessment_configured", return_value=True),
             patch.object(
@@ -113,6 +130,8 @@ class AssessmentFlowTests(unittest.TestCase):
             ),
             patch.object(vector_store, "_collection", self.collection),
             patch.object(assessor, "get_client", return_value=client),
+            patch.object(app, "extract_policy_controls",
+                         side_effect=extract_fixture_controls),
         ):
             return app.run_assessment(
                 "Synthetic Vendor",
@@ -130,7 +149,7 @@ class AssessmentFlowTests(unittest.TestCase):
         feedback, findings = self._run_local_assessment(policy_text)
 
         self.assertIn("Assessment completed", feedback)
-        self.assertIn("Checklist v1.0.0", feedback)
+        self.assertIn("Extracted 4 policy controls", feedback)
         self.assertIn("4 Met · 0 Unmet · 0 Unclear", findings)
         self.assertIn("company-policy.txt", findings)
         self.assertIn("vendor-evidence.txt", findings)
@@ -145,8 +164,8 @@ class AssessmentFlowTests(unittest.TestCase):
         feedback, findings = self._run_local_assessment(policy_text)
 
         self.assertIn("Assessment completed", feedback)
-        self.assertIn("3 Met · 0 Unmet · 1 Unclear", findings)
-        self.assertIn("No matching policy clause was found for OPS-01", findings)
+        self.assertIn("3 Met · 0 Unmet · 0 Unclear", findings)
+        self.assertIn("Extracted 3 policy controls", feedback)
 
 
 if __name__ == "__main__":

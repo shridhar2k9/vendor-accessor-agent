@@ -1,0 +1,249 @@
+[
+  {
+    "title": "Apply checklist for vendor data access",
+    "requirement": "Apply this checklist when a vendor stores, transmits, or otherwise accesses company or customer information and record the intended use, data categories, evidence sources, and review date.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "Apply this checklist when a vendor stores, transmits, or otherwise accesses company or customer information. Record the intended use, data categories, evidence sources, and review date.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 1,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Human analyst review required",
+    "requirement": "A Northstar analyst must review evidence and citations before a final decision; AI‑generated findings are drafts.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "Human review required. AI-generated findings are drafts. A Northstar analyst owns the assessment and must review evidence and citations before a final decision.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 1,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Do not treat missing evidence as compliance",
+    "requirement": "Missing evidence must never be treated as proof of compliance.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "Missing evidence must never be treated as proof of compliance.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 1,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Escalate conflicting claims",
+    "requirement": "Escalate conflicting claims and request clarification rather than choosing one silently.",
+    "severity": "medium",
+    "policy_evidence": [
+      {
+        "text": "Escalate conflicting claims and request clarification rather than choosing one silently.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 1,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Data encryption at rest and in transit",
+    "requirement": "Company data is encrypted at rest and in transit.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "SEC-01\nCompany data is encrypted at rest and in transit.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 2,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Privileged and production access MFA",
+    "requirement": "Privileged and production access uses multi‑factor authentication (MFA).",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "SEC-02\nPrivileged and production access uses MFA.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 2,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Quarterly customer data access review",
+    "requirement": "Access to customer data is reviewed at least quarterly.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "SEC-03\nAccess to customer data is reviewed at least\nquarterly.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 2,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Security event logging and monitoring",
+    "requirement": "Security events are logged and monitored.",
+    "severity": "medium",
+    "policy_evidence": [
+      {
+        "text": "SEC-04\nSecurity events are logged and monitored.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 2,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Critical vulnerability remediation timeframe",
+    "requirement": "Critical vulnerabilities are remediated within 15 calendar days.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "VULN-01\nCritical vulnerabilities are remediated within 15\ncalendar days.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 2,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Incident notification window",
+    "requirement": "Northstar is notified of a confirmed incident affecting its data within 72 hours of discovery.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "IR-01\nNorthstar is notified of a confirmed incident affecting\nits data within 72 hours of discovery.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 2,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Subprocessor identification and communication",
+    "requirement": "All subprocessors handling Northstar data are identified and changes are communicated.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "PRIV-01\nAll subprocessors handling Northstar data are\nidentified and changes are communicated.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 3,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Data deletion after termination",
+    "requirement": "Northstar data is deleted within 30 days after service termination, unless legally required otherwise.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "DATA-01\nNorthstar data is deleted within 30 days after service\ntermination, unless legally required otherwise.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 3,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Business continuity documentation",
+    "requirement": "Documented continuity and recovery arrangements cover the service, including test cadence, recovery objectives, and scope.",
+    "severity": "medium",
+    "policy_evidence": [
+      {
+        "text": "BCP-01\nDocumented continuity and recovery arrangements\ncover the service.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 3,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "AI model training restriction",
+    "requirement": "Northstar data is not used to train shared models without written authorization.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "AI-01\nNorthstar data is not used to train shared models\nwithout written authorization.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 3,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Unmet high‑severity control escalation",
+    "requirement": "Any Unmet High control requires security owner review.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "Any Unmet High control requires security owner review.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 3,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Unclear high‑severity control escalation",
+    "requirement": "Any Unclear High control requires vendor follow‑up before a final risk decision.",
+    "severity": "high",
+    "policy_evidence": [
+      {
+        "text": "Any Unclear High control requires vendor follow-up before a final risk decision.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 3,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Contradictory evidence handling",
+    "requirement": "Contradictory evidence must be marked Unclear until reconciled.",
+    "severity": "medium",
+    "policy_evidence": [
+      {
+        "text": "Contradictory evidence must be marked Unclear until reconciled.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 3,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Exception documentation procedure",
+    "requirement": "Analysts may document an approved exception with an owner, rationale, and expiry date.",
+    "severity": "medium",
+    "policy_evidence": [
+      {
+        "text": "Analysts may document an approved exception with an owner, rationale, and expiry date.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 3,
+        "source_type": "company_policy"
+      }
+    ]
+  },
+  {
+    "title": "Final decision record preservation",
+    "requirement": "Preserve the final decision record with reviewed statuses, citations, analyst notes, exceptions, reviewer identity, and decision date.",
+    "severity": "medium",
+    "policy_evidence": [
+      {
+        "text": "Final decision record: preserve the reviewed statuses, citations, analyst notes, exceptions, reviewer identity, and decision date.",
+        "source": "01_Northstar_Third_Party_Security_Policy.pdf",
+        "page": 3,
+        "source_type": "company_policy"
+      }
+    ]
+  }
+]

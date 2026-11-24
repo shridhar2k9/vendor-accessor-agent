@@ -25,14 +25,14 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Upload company policies and vendor evidence, enter the vendor details, then run
-the assessment. Findings use the versioned built-in checklist (`1.0.0`). Each
-policy clause must be labeled with its control ID (for example, `SEC-01:` at
-the start of a line). The finding uses that clause's uploaded wording and
-retrieves vendor evidence against it. If a control ID is missing or occurs on
-multiple clause headings, that finding is marked **Unclear** with a policy
-mapping explanation; other controls continue. Untagged policy clauses are not
-automatically mapped.
+Upload the company privacy/security policy and vendor evidence, enter the vendor
+details, then run the assessment. The app reads the uploaded policy, asks Groq to
+extract actionable obligations into a dynamic checklist, and builds the
+assessment from those controls. No fixed control IDs or special policy labels
+are required. Each control gets an application-assigned `POL-###` ID and a policy
+source quote. Python verifies that quote against the uploaded page before using
+the control. The app then retrieves vendor evidence for each policy-derived
+requirement. The resulting controls and findings are shown for analyst review.
 
 Findings are drafts for human review, not approval decisions. The app verifies
 that reported citations match excerpts retrieved from the uploaded documents.
@@ -43,9 +43,10 @@ integration with documents you are not permitted to share with that provider.
 
 ```mermaid
 flowchart TD
-    A[Upload policy and vendor evidence] --> B[Map each checklist control to one policy clause]
-    B --> C[Version 2 retrieval and cited draft finding]
-    C --> D{Unclear with a mapped clause?}
+    A[Upload policy and vendor evidence] --> B[Extract policy obligations with Groq]
+    B --> C[Assign IDs and policy citations]
+    C --> C2[Retrieve evidence and create cited findings]
+    C2 --> D{Unclear with a policy requirement?}
     D -- No --> H[Show draft finding]
     D -- Yes --> E[Agent requests approved tools]
     E --> F[Re-search same vendor evidence]
@@ -86,13 +87,21 @@ external system.
 Run the deterministic contract evaluation with:
 
 ```powershell
-\.venv\Scripts\python.exe -m unittest tests.test_v3_evaluation tests.test_assessor -v
+\.venv\Scripts\python.exe -m unittest tests.test_policy_extractor tests.test_assessment_flow tests.test_v3_evaluation tests.test_assessor -v
 ```
 
 The repository contains no vendor sample documents in `data/`, so this small
 set uses synthetic access-review excerpts and a mocked model response. It checks
 the application contract and citation/guardrail plumbing; it does not measure
 Groq answer quality or validate live public search.
+
+The old example checklist in `src/vendor_risk/scoring.py` remains only for
+legacy fixtures. It is no longer imported by the runtime assessment flow.
+Policy extraction is capped at 120,000 text characters and 24 model batches.
+Longer policies need to be split into smaller uploads. Scanned PDFs without
+selectable text need OCR before upload; the app does not perform OCR. The
+extracted checklist is a model draft, so analysts should check that it captured
+all material obligations before relying on the assessment.
 
 | Case | Expected | Actual | Citation/review check |
 |---|---|---|---|
@@ -114,9 +123,10 @@ record the real outputs and analyst review decisions.
 
 1. Configure Groq. For public research, also configure Tavily and the approved
    host allowlist.
-2. Start the app locally with `python app.py` and upload one labelled policy
-   document and vendor evidence.
-3. Run the assessment. Show an ordinary cited finding and an unclear finding
+2. Start the app locally with `python app.py` and upload a readable company
+   privacy/security policy and vendor evidence.
+3. Run the assessment. Show the extracted policy checklist, an ordinary cited
+   finding, and an unclear finding
    that triggers targeted investigation. With public search enabled, show a
    public page citation and its URL/access date.
 4. Select a control in **Analyst review**, confirm or change its status, add a
@@ -129,8 +139,8 @@ record the real outputs and analyst review decisions.
 Each control first receives the Version 2 assessment. Only unclear findings with
 a mapped policy requirement can trigger investigation. The model may request
 three approved calls total: re-search uploaded evidence for a known control,
-search configured public domains, or draft an analyst follow-up question. The
-application derives the vendor ID and validates control IDs before dispatch;
+search configured public domains, open a returned public page, or draft an
+analyst follow-up question. The application derives the vendor ID and validates control IDs before dispatch;
 follow-up questions are shown for review and are never sent to a vendor.
 
 Public search is optional and uses Tavily. Set `TAVILY_API_KEY` and
